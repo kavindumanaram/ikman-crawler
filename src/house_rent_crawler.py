@@ -1,56 +1,109 @@
 from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
 import math
-from src.utils import URL_PREFIX
-from src.utils import get_spreadsheet, extract_json_data, read_config
+from utils import URL_PREFIX
+from utils import get_spreadsheet, extract_json_data, read_config
+import pandas as pd
+from openpyxl import load_workbook
 # from utils import URL_PREFIX
 # from utils import get_spreadsheet, extract_json_data, read_config
 
+
 MAX_PAGES_THRESHOLD = 10
  
-def get_last_house_urls(sheet):
-    old_values = sheet.get_all_values()
-    headers = old_values[0]
-    url_index = headers.index('URL')
-    old_data_urls = []
-    for i in range(1, len(old_values)):
-        data_row = old_values[i]
-        url = data_row[url_index]
-        old_data_urls.append(url)
-    print("Last house data processed successfully")
-    return old_data_urls
+def get_last_house_urls(house_data_sheet):
+    """
+    Reads the 'Sale' sheet and retrieves the last house URLs.
+    Replace this with your custom logic to parse house URLs.
+    """
+    data = house_data_sheet  # Pandas DataFrame
+    if "URL" in data.columns:
+        return data["URL"].tolist()[-5:]  # Get last 5 URLs
+    return []
  
 
-def append_house_data(sheet, data):
-    last_row = len(sheet.get_all_values()) + 1
-    required_rows = last_row + len(data)
-    if required_rows > sheet.row_count:
-        sheet.add_rows(required_rows - sheet.row_count)
-    range_str = 'A' + str(last_row) + ':G' + str(required_rows)
-    sheet.update(range_str, data)
-    print(f"Appended data to : {sheet.title}, count: {len(data)}")
+def append_house_data(file_path, sheet_name, data):
+    # Ensure sheet_name is a string
+    # if not isinstance(sheet_name, str):
+    #     raise ValueError(f"Expected sheet_name to be a string, got {type(sheet_name).__name__}.")
 
-def extract_url_data(config):
+    # Load the workbook
+    try:
+        wb = load_workbook(file_path)
+        # Check if the sheet exists
+        #print(f"wb.sheetnames={wb.sheetnames}")
+        #if sheet_name in wb.sheetnames:
+        ws = wb["Sale"]
+        #else:
+            # Create the sheet if it doesn't exist
+        #ws = wb.create_sheet(sheet_name)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file {file_path} does not exist.")
+
+    # Append each row of data to the sheet
+    for row_data in data:
+        ws.append(row_data)
+
+    # Save the workbook
+    wb.save(file_path)
+    print(f"Appended data to sheet '{sheet_name}' in file '{file_path}'.")
+
+
+
+def extract_url_data(spreadsheet):
     url_data = []
-    for url in config['Rent']:
-        city = url.split('/')[5].replace('-', ' ').title()
-        url_data.append([city, url])
+
+    # Check if spreadsheet is already a DataFrame
+    if isinstance(spreadsheet, pd.DataFrame):
+        config_sheet = spreadsheet
+    else:
+        # Parse the "Config" sheet from the Excel file
+        config_sheet = spreadsheet.parse(sheet_name="Config")
+
+    # Iterate over the rows of the DataFrame
+    for _, row in config_sheet.iterrows():  # Use iterrows() for pandas DataFrame
+        key = row['Key']  # Column name in the sheet
+        value = row['Value']  # Column name in the sheet
+        if key == "House" and pd.notna(value):  # Check for "House" keys and non-NaN values
+            url_parts = value.split('/')
+            if len(url_parts) > 5:
+                city = url_parts[5].replace('-', ' ').title()
+                url_data.append([city, value])
+
     return url_data
 
+
 def handler(event, context):
+    # Step 1: Get the spreadsheet
     spreadsheet = get_spreadsheet()
 
+    # Step 2: Read the config sheet
     config = read_config(spreadsheet)
 
+    # Step 3: Extract URL data from the config
     url_data = extract_url_data(config)
-    
-    house_data_sheet = spreadsheet.worksheet("Rent")
+
+    # Step 4: Read the "Sale" sheet
+    house_data_sheet = spreadsheet.parse(sheet_name="Sale")  # Load "Sale" sheet into a DataFrame
+
+    # Optional Step: Backup the sheet (commented)
     # backup_sheet(spreadsheet, house_data_sheet)
-    last_house_urls = get_last_house_urls(house_data_sheet)    
-    # clear_data(house_data_sheet)    
+
+    # Step 5: Retrieve the last house URLs
+    last_house_urls = get_last_house_urls(house_data_sheet)
+
+    print("Configuration Data:")
+    print(config)
+
+    print("\nExtracted URL Data:")
+    print(url_data)
+
+    print("\nLast House URLs:")
+    print(last_house_urls) 
 
     return_data = []
     for url_index in range(len(url_data)):
+        print(f"url_index = {url_index}")
         city = url_data[url_index][0]
         print(f"Fetching data location: {city}")
         url = url_data[url_index][1]
@@ -58,7 +111,9 @@ def handler(event, context):
         for page_no in range(1, MAX_PAGES_THRESHOLD + 1):
             final_url = f"{url}&page={page_no}"
             data = extract_json_data(final_url)
-            ads = data['serp']['ads']['data']['ads']            
+            #print(f"data={data}")
+            ads = data['serp']['ads']['data']['ads']   
+            #print(f"ads={ads}")         
             
             if max_page_number < 0:
                 pagination = data['serp']['ads']['data']['paginationData']
@@ -87,7 +142,7 @@ def handler(event, context):
             else:
                 print("continue")
 
-    append_house_data(house_data_sheet, return_data)
+    append_house_data("test.xlsx",house_data_sheet, return_data)
     
     
-# handler({}, {})
+handler({}, {})
